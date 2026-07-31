@@ -10,8 +10,7 @@ st.set_page_config(
 st.title("Luke's H1 & Title Tag Rewriter Tool ✍️")
 st.write(
     "Upload your crawl CSV to programmatically generate clean, unique H1s and"
-    " Meta Titles based on URL taxonomy."
-    "Add search volume and keywords for a closer match!"
+    " Meta Titles based on rich URL taxonomy."
 )
 
 
@@ -67,7 +66,39 @@ def deduplicate_title_words(title_str):
     return " ".join(clean_words)
 
 
-# --- Helper 3: Taxonomy Parser ---
+# --- Helper 3: Rich Taxonomy Parser ---
+BRANDS = [
+    ("Rapid 1", ["rapid-1", "rapid 1"]),
+    ("Rapid 2", ["rapid-2", "rapid 2"]),
+    ("Probe", ["probe"]),
+    ("QMP", ["qmp"]),
+    ("Elite", ["elite"]),
+    ("Pure", ["pure"]),
+    ("Educate", ["educate"]),
+    ("Value Line", ["value-line", "value line"]),
+    ("Everyday", ["everyday"]),
+    ("Titan", ["titan"]),
+    ("Hille", ["hille"]),
+    ("Bisley", ["bisley"]),
+]
+
+COLORS_MAP = [
+    ("Blue/Grey", ["blue-grey", "blue/grey"]),
+    ("Blue/Orange", ["blue-orange", "blue/orange"]),
+    ("Blue", ["blue"]),
+    ("Grey", ["grey", "gray"]),
+    ("Red", ["red"]),
+    ("Black", ["black"]),
+    ("Green", ["green"]),
+    ("White", ["white"]),
+    ("Yellow", ["yellow"]),
+    ("Silver", ["silver"]),
+    ("Oak", ["oak"]),
+    ("Beech", ["beech"]),
+    ("Walnut", ["walnut"]),
+    ("Maple", ["maple"]),
+]
+
 CATEGORY_PATTERNS = [
     ("Classroom Tables", ["classroom-tables", "classroom tables"]),
     ("Classroom Chairs", ["classroom-chairs", "classroom chairs"]),
@@ -85,155 +116,121 @@ CATEGORY_PATTERNS = [
     ("Cupboards", ["cupboards"]),
     ("Pedestals", ["pedestals"]),
     ("Storage", ["storage"]),
-    ("Screens", ["screens"]),
-    ("Sofas", ["sofas"]),
-    ("Benches", ["benches"]),
-]
-
-BRANDS = [
-    ("Probe", ["probe"]),
-    ("Rapid 1", ["rapid-1", "rapid 1"]),
-    ("Rapid 2", ["rapid-2", "rapid 2"]),
-    ("QMP", ["qmp"]),
-    ("Elite", ["elite"]),
-    ("Pure", ["pure"]),
-    ("Educate", ["educate"]),
-    ("Value Line", ["value-line", "value line"]),
-    ("Everyday", ["everyday"]),
-    ("Titan", ["titan"]),
-    ("Hille", ["hille"]),
-    ("Bisley", ["bisley"]),
-    ("Tully", ["tully"]),
-    ("Progress", ["progress"]),
-]
-
-MATERIALS = [
-    ("Chipboard", ["chipboard"]),
-    ("Galvanised", ["galvanized", "galvanised"]),
-    ("Melamine", ["melamine"]),
-    ("Wire Mesh", ["wire-mesh", "wire mesh"]),
-    ("Perforated", ["perforated"]),
-    ("Vision Panel", ["vision-panel", "vision"]),
-    ("Fully Welded", ["fully-welded", "fully welded"]),
-    ("Crush Bent", ["crush-bent", "crush bent"]),
 ]
 
 
-def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
+def parse_url_taxonomy(url_str, curr_title="", curr_h1="", include_range=True):
     if not isinstance(url_str, str):
         return ""
 
     parsed = urlparse(url_str)
-    path_segments = [
-        seg
-        for seg in parsed.path.split("/")
-        if seg and not seg.endswith(".html")
-    ]
-    full_path_str = "/".join(path_segments).lower()
+    filename = parsed.path.split("/")[-1]
+    slug = re.sub(r"\.html$", "", filename).lower()
+    full_path_str = parsed.path.lower()
 
-    clean_curr_h1 = curr_h1 if curr_h1 and str(curr_h1).strip() != "0" else ""
-    clean_curr_title = (
-        curr_title if curr_title and str(curr_title).strip() != "0" else ""
-    )
-    full_context = (
-        f"{full_path_str} {clean_curr_h1.lower()} {clean_curr_title.lower()}"
-    )
-
-    # Category
-    product_type = ""
-    for cat_name, keywords in CATEGORY_PATTERNS:
-        if any(kw in full_context for kw in keywords):
-            product_type = cat_name
-            break
-
-    # Brand
+    # A. Brand / Range
     brand_range = ""
     for b_name, b_kws in BRANDS:
         if any(kw in full_path_str for kw in b_kws):
             brand_range = b_name
             break
 
-    # Material
-    material_finish = ""
-    for m_name, m_kws in MATERIALS:
-        if any(kw in full_path_str for kw in m_kws):
-            material_finish = m_name
+    # B. Duty / Grade Rating
+    duty = ""
+    if "heavy-duty" in slug or "heavy duty" in slug:
+        duty = "Heavy Duty"
+    elif "standard-shelving" in slug or "standard" in slug:
+        duty = "Standard Duty"
+
+    # C. Colour Detection
+    colour = ""
+    for c_name, c_kws in COLORS_MAP:
+        if any(kw in slug for kw in c_kws):
+            colour = c_name
             break
 
-    # Specs
-    spec_door, spec_tier, dimensions, age_group, capacity = "", "", "", "", ""
+    # D. Shelves & Material Spec
+    shelves_spec = ""
+    shelves_match = re.search(
+        r"with-(\d+)-(chipboard|melamine|wire-mesh|mesh|steel|wood)-shelves", slug
+    )
+    if shelves_match:
+        count = shelves_match.group(1)
+        mat = shelves_match.group(2).title().replace("-", " ")
+        shelves_spec = f"With {count} {mat} Shelves"
+    else:
+        shelves_gen = re.search(
+            r"(\d+)-(chipboard|melamine|mesh|steel)-shelves", slug
+        )
+        if shelves_gen:
+            count = shelves_gen.group(1)
+            mat = shelves_gen.group(2).title()
+            shelves_spec = f"With {count} {mat} Shelves"
 
-    for seg in path_segments:
-        seg_lower = seg.lower()
+    # E. Door / Tier Spec
+    spec_door, spec_tier = "", ""
+    d_match = re.search(r"\b(\d+)\s*-?\s*door\b", slug)
+    if d_match:
+        spec_door = f"{d_match.group(1)} Door"
 
-        d_match = re.search(r"\b(\d+)\s*-?\s*door\b", seg_lower)
-        if d_match:
-            spec_door = f"{d_match.group(1)} Door"
+    t_match = re.search(r"\b(\d+)\s*-?\s*(tier|shelves)\b", slug)
+    if t_match and not shelves_spec:
+        spec_tier = f"{t_match.group(1)} Tier"
 
-        t_match = re.search(r"\b(\d+)\s*-?\s*(tier|shelves)\b", seg_lower)
-        if t_match:
-            spec_tier = f"{t_match.group(1)} Tier"
+    # F. Dimensions & Capacity
+    dimensions, capacity, age_group = "", "", ""
+    dim_match = re.search(r"(\d+wx\d+h|\d+wx\d+dx\d+h)", slug)
+    if dim_match:
+        dimensions = dim_match.group(1)
 
-        c_match = re.search(r"\b(\d+kg)\b", seg_lower)
-        if c_match:
-            capacity = f"({c_match.group(1).upper()})"
+    c_match = re.search(r"\b(\d+kg)\b", slug)
+    if c_match:
+        capacity = f"({c_match.group(1).upper()})"
 
-        a_match = re.search(r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", seg_lower)
-        if a_match:
-            age_group = f"({a_match.group(1)} Years)"
+    a_match = re.search(r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", slug)
+    if a_match:
+        age_group = f"({a_match.group(1)} Years)"
 
-        if re.search(r"\d+wx\d+h", seg_lower) or re.search(
-            r"\d+wx\d+dx\d+h", seg_lower
-        ):
-            dim_str = seg_lower
-            dim_str = re.sub(r"[-_]*cm$", "", dim_str)
-            dim_str = re.sub(r"[-_]*mm$", "", dim_str)
+    # G. Product Type Category
+    product_type = ""
+    for cat_name, keywords in CATEGORY_PATTERNS:
+        if any(kw in full_path_str for kw in keywords):
+            product_type = cat_name
+            break
 
-            d3 = re.search(r"(\d+)wx(\d+)dx(\d+)h", dim_str)
-            d2 = re.search(r"(\d+)wx(\d+)h", dim_str)
-            if d3:
-                dimensions = (
-                    f"{d3.group(1)}w x {d3.group(2)}d x {d3.group(3)}h cm".upper()
-                )
-            elif d2:
-                dimensions = f"{d2.group(1)}w x {d2.group(2)}h mm".upper()
-
-    # Title Parts Assembly
-    title_parts = []
-    if brand_range:
-        title_parts.append(brand_range)
-    if material_finish:
-        title_parts.append(material_finish)
+    # Construct in user's preferred order:
+    # Range + Colour + Duty + Product Type + Shelves/Specs + Dimensions
+    parts = []
+    if include_range and brand_range:
+        parts.append(brand_range)
+    if colour:
+        parts.append(colour)
+    if duty:
+        parts.append(duty)
     if spec_door:
-        title_parts.append(spec_door)
+        parts.append(spec_door)
     if spec_tier:
-        title_parts.append(spec_tier)
+        parts.append(spec_tier)
 
-    current_title_str = " ".join(title_parts)
-    if product_type:
-        if product_type.lower() not in current_title_str.lower():
-            if "door" in current_title_str.lower() and product_type.lower() in [
-                "lockers",
-                "door lockers",
-            ]:
-                title_parts.append("Lockers")
-            else:
-                title_parts.append(product_type)
-    elif not title_parts and path_segments:
-        title_parts.append(path_segments[-1].replace("-", " ").title())
+    # Ensure product_type is present
+    current_str = " ".join(parts)
+    if product_type and product_type.lower() not in current_str.lower():
+        parts.append(product_type)
 
+    if shelves_spec:
+        parts.append(shelves_spec)
     if dimensions:
-        title_parts.append(dimensions)
+        parts.append(dimensions)
     if age_group:
-        title_parts.append(age_group)
+        parts.append(age_group)
     if capacity:
-        title_parts.append(capacity)
+        parts.append(capacity)
 
-    raw_h1 = " ".join(title_parts)
+    raw_h1 = " ".join(parts)
     return deduplicate_title_words(raw_h1)
 
 
-# --- Helper 4: Safe Non-Blocking Disambiguation Engine ---
+# --- Helper 4: Safe Disambiguation Engine ---
 def ensure_unique_title(url_str, base_h1, brand_suffix, max_len, seen_titles):
     def build_title(h1):
         raw = f"{h1}{brand_suffix}"
@@ -355,11 +352,12 @@ if uploaded_file is not None:
             "Current H1 Column", column_options, index=h1_index
         )
 
+    # Increased default character limit to 90 so descriptive titles fit cleanly
     max_title_len = st.number_input(
         "Max Title Tag Length (Characters)",
         min_value=30,
-        max_value=100,
-        value=70,
+        max_value=120,
+        value=90,
     )
 
     if st.button("Generate Rewritten Titles & H1s"):
@@ -393,7 +391,10 @@ if uploaded_file is not None:
                 )
 
                 raw_h1 = parse_url_taxonomy(
-                    url, curr_title=current_title, curr_h1=current_h1
+                    url,
+                    curr_title=current_title,
+                    curr_h1=current_h1,
+                    include_range=False,
                 )
                 final_h1, final_title = ensure_unique_title(
                     url,
@@ -416,12 +417,12 @@ if uploaded_file is not None:
             progress_bar.empty()
 
         output_df = pd.DataFrame(results)
-        st.subheader("🎉 Generated Optimised Titles and/or H1s. Always check them over before sending to a client.")
+        st.subheader("🎉 Generated Optimization Table")
         st.dataframe(output_df)
 
         csv_data = output_df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Download CSV",
+            label="📥 Download Rewritten Titles & H1s CSV",
             data=csv_data,
             file_name="rewritten_titles_and_h1s.csv",
             mime="text/csv",
