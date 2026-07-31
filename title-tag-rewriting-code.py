@@ -22,6 +22,40 @@ def find_column(df, candidates):
     return None
 
 
+# Helper 1: Remove repeated words within a single title string (protecting specs/dimensions)
+def deduplicate_title_words(title_str):
+    words = title_str.split()
+    seen = set()
+    clean_words = []
+    # Protect dimension identifiers and connectors from deduplication
+    protected = {
+        "x",
+        "w",
+        "d",
+        "h",
+        "cm",
+        "mm",
+        "kg",
+        "&",
+        "and",
+        "or",
+        "in",
+        "for",
+        "of",
+        "with",
+        "|",
+        "-",
+    }
+
+    for w in words:
+        w_lower = re.sub(r"[\(\)\|,]", "", w.lower())
+        if w_lower in protected or w_lower not in seen:
+            if w_lower not in protected and len(w_lower) > 0:
+                seen.add(w_lower)
+            clean_words.append(w)
+    return " ".join(clean_words)
+
+
 if uploaded_file is not None:
     try:
         try:
@@ -107,9 +141,9 @@ if uploaded_file is not None:
     # 3. Processing Engine
     if st.button("Generate Rewritten Titles & H1s"):
 
-        def parse_url_taxonomy(url_str, curr_title="", curr_h1="", max_len=70):
+        def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
             if not isinstance(url_str, str):
-                return "", ""
+                return ""
 
             parsed = urlparse(url_str)
             path_segments = [
@@ -204,7 +238,7 @@ if uploaded_file is not None:
                     material_finish = m_name
                     break
 
-            # D. Extract Specs (Door/Tier Counts, Dimensions, Age, Capacity)
+            # D. Extract Specs
             spec_door, spec_tier, dimensions, age_group, capacity = (
                 "",
                 "",
@@ -216,31 +250,26 @@ if uploaded_file is not None:
             for seg in path_segments:
                 seg_lower = seg.lower()
 
-                # Door count
                 d_match = re.search(r"\b(\d+)\s*-?\s*door\b", seg_lower)
                 if d_match:
                     spec_door = f"{d_match.group(1)} Door"
 
-                # Tier count
                 t_match = re.search(
                     r"\b(\d+)\s*-?\s*(tier|shelves)\b", seg_lower
                 )
                 if t_match:
                     spec_tier = f"{t_match.group(1)} Tier"
 
-                # Capacity
                 c_match = re.search(r"\b(\d+kg)\b", seg_lower)
                 if c_match:
                     capacity = f"({c_match.group(1).upper()})"
 
-                # Age Groups
                 a_match = re.search(
                     r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", seg_lower
                 )
                 if a_match:
                     age_group = f"({a_match.group(1)} Years)"
 
-                # Dimensions
                 if re.search(r"\d+wx\d+h", seg_lower) or re.search(
                     r"\d+wx\d+dx\d+h", seg_lower
                 ):
@@ -292,27 +321,92 @@ if uploaded_file is not None:
                 title_parts.append(capacity)
 
             raw_h1 = " ".join(title_parts)
-            raw_h1 = re.sub(
-                r"\b(\w+)\s+\1\b", r"\1", raw_h1, flags=re.IGNORECASE
-            )
-            raw_h1 = re.sub(r"\s+", " ", raw_h1).strip()
+            raw_h1 = deduplicate_title_words(raw_h1)
 
-            brand_suffix = " | Furniture At Work"
-            full_title = f"{raw_h1}{brand_suffix}"
+            return raw_h1
 
+        # Helper 2: Cross-URL Disambiguation Engine
+        def ensure_unique_title(
+            url_str, base_h1, brand_suffix, max_len, seen_titles
+        ):
+            full_title = f"{base_h1}{brand_suffix}"
+
+            # If title length exceeds max, truncate body cleanly
             if len(full_title) > max_len:
                 max_body_len = max_len - len(brand_suffix)
                 if max_body_len > 10:
-                    truncated_body = raw_h1[:max_body_len].rsplit(" ", 1)[0]
-                    proposed_title = f"{truncated_body}{brand_suffix}"
+                    truncated_body = base_h1[:max_body_len].rsplit(" ", 1)[0]
+                    full_title = f"{truncated_body}{brand_suffix}"
                 else:
-                    proposed_title = full_title[:max_len]
-            else:
-                proposed_title = full_title
+                    full_title = full_title[:max_len]
 
-            return raw_h1, proposed_title
+            # Unique Check 1: Title is already unique across dataset
+            if full_title not in seen_titles:
+                seen_titles.add(full_title)
+                return base_h1, full_title
+
+            # Unique Check 2: Try adding parent URL folder differentiators
+            parsed = urlparse(url_str)
+            segments = [
+                s.replace("-", " ").title()
+                for s in parsed.path.split("/")
+                if s and not s.endswith(".html")
+            ]
+
+            differentiating_h1 = base_h1
+            for seg in reversed(segments[:-1]):
+                diff_words = [
+                    w
+                    for w in seg.split()
+                    if w.lower() not in base_h1.lower()
+                    and w.lower()
+                    not in [
+                        "lockers",
+                        "tables",
+                        "desks",
+                        "chairs",
+                        "metric",
+                        "furniture",
+                    ]
+                ]
+                if diff_words:
+                    diff_text = " ".join(diff_words)
+                    differentiating_h1 = f"{diff_text} {base_h1}"
+                    differentiating_h1 = deduplicate_title_words(
+                        differentiating_h1
+                    )
+
+                    candidate_title = f"{differentiating_h1}{brand_suffix}"
+                    if len(candidate_title) > max_len:
+                        max_body_len = max_len - len(brand_suffix)
+                        truncated_body = differentiating_h1[
+                            :max_body_len
+                        ].rsplit(" ", 1)[0]
+                        candidate_title = f"{truncated_body}{brand_suffix}"
+
+                    if candidate_title not in seen_titles:
+                        seen_titles.add(candidate_title)
+                        return differentiating_h1, candidate_title
+
+            # Unique Check 3: Fallback variant numbering for identical URL parameters/paths
+            variant_counter = 2
+            while True:
+                variant_h1 = f"{base_h1} (Variant {variant_counter})"
+                candidate_title = f"{variant_h1}{brand_suffix}"
+                if len(candidate_title) > max_len:
+                    max_body_len = max_len - len(brand_suffix)
+                    truncated_body = variant_h1[:max_body_len].rsplit(" ", 1)[0]
+                    candidate_title = f"{truncated_body}{brand_suffix}"
+
+                if candidate_title not in seen_titles:
+                    seen_titles.add(candidate_title)
+                    return variant_h1, candidate_title
+                variant_counter += 1
 
         results = []
+        seen_recommended_titles = set()
+        brand_suffix = " | Furniture At Work"
+
         for _, row in df.iterrows():
             url = str(row[url_col])
             current_title = (
@@ -326,20 +420,25 @@ if uploaded_file is not None:
                 else ""
             )
 
-            new_h1, new_title = parse_url_taxonomy(
+            raw_h1 = parse_url_taxonomy(
+                url, curr_title=current_title, curr_h1=current_h1
+            )
+
+            final_h1, final_title = ensure_unique_title(
                 url,
-                curr_title=current_title,
-                curr_h1=current_h1,
-                max_len=max_title_len,
+                raw_h1,
+                brand_suffix,
+                max_title_len,
+                seen_recommended_titles,
             )
 
             results.append({
                 "URL / Address": url,
                 "Current Title Tag": current_title,
-                "Recommended Title Tag": new_title,
+                "Recommended Title Tag": final_title,
                 "Current H1": current_h1,
-                "Recommended H1": new_h1,
-                "Title Tag Length": len(new_title),
+                "Recommended H1": final_h1,
+                "Title Tag Length": len(final_title),
             })
 
         output_df = pd.DataFrame(results)
