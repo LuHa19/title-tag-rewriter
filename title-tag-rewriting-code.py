@@ -10,10 +10,11 @@ st.write(
 )
 
 # 1. File Uploader
-uploaded_file = st.file_uploader("Upload CSV File", type=["csv", "tsv", "txt"])
+uploaded_file = st.file_uploader(
+    "Upload CSV File", type=["csv", "tsv", "txt", "numbers"]
+)
 
 
-# Helper function to auto-detect column headers
 def find_column(df, candidates):
     for col in df.columns:
         if col.strip().lower() in [c.lower() for c in candidates]:
@@ -23,9 +24,21 @@ def find_column(df, candidates):
 
 if uploaded_file is not None:
     try:
-        df = pd.read_csv(uploaded_file, sep=None, engine="python")
+        try:
+            df = pd.read_csv(
+                uploaded_file, encoding="utf-8", sep=None, engine="python"
+            )
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            df = pd.read_csv(
+                uploaded_file, encoding="latin1", sep=None, engine="python"
+            )
     except Exception:
-        df = pd.read_csv(uploaded_file)
+        st.error(
+            "⚠️ Unable to read file. If using Apple Numbers or Excel, please go"
+            " to File ➔ Export To ➔ CSV before uploading."
+        )
+        st.stop()
 
     st.success(f"Successfully loaded {len(df)} URLs!")
 
@@ -51,7 +64,6 @@ if uploaded_file is not None:
     st.subheader("📋 Select Column Mapping")
     col1, col2, col3 = st.columns(3)
 
-    # Prepare options including "None"
     column_options = ["None"] + list(df.columns)
 
     with col1:
@@ -95,18 +107,7 @@ if uploaded_file is not None:
     # 3. Processing Engine
     if st.button("Generate Rewritten Titles & H1s"):
 
-        def format_slug_text(slug):
-            text = slug.replace("-", " ").replace("_", " ")
-            text = re.sub(r"\.html$", "", text)
-            text = re.sub(
-                r"\b(\d+)\s*wx\s*(\d+)\s*dx\s*(\d+)\s*h\b",
-                r"\1w x \2d x \3h",
-                text,
-            )
-            text = re.sub(r"\b(\d+)\s*wx\s*(\d+)\s*h\b", r"\1w x \2h", text)
-            return text.strip().title()
-
-        def parse_url_taxonomy(url_str, max_len=70):
+        def parse_url_taxonomy(url_str, curr_title="", curr_h1="", max_len=70):
             if not isinstance(url_str, str):
                 return "", ""
 
@@ -116,121 +117,200 @@ if uploaded_file is not None:
                 for seg in parsed.path.split("/")
                 if seg and not seg.endswith(".html")
             ]
+            full_path_str = "/".join(path_segments).lower()
 
+            clean_curr_h1 = (
+                curr_h1 if curr_h1 and str(curr_h1).strip() != "0" else ""
+            )
+            clean_curr_title = (
+                curr_title
+                if curr_title and str(curr_title).strip() != "0"
+                else ""
+            )
+            full_context = (
+                f"{full_path_str} {clean_curr_h1.lower()}"
+                f" {clean_curr_title.lower()}"
+            )
+
+            # A. Product Category Detection
+            category_patterns = [
+                ("Classroom Tables", ["classroom-tables", "classroom tables"]),
+                ("Classroom Chairs", ["classroom-chairs", "classroom chairs"]),
+                (
+                    "Office Desks",
+                    ["office-desks", "office desks", "desks-by-size", "desks"],
+                ),
+                ("Executive Desks", ["executive-desks"]),
+                ("Height Adjustable Desks", ["height-adjustable-desks"]),
+                ("Office Chairs", ["office-chairs", "office chairs"]),
+                ("Executive Chairs", ["executive-chairs"]),
+                ("Door Lockers", ["door-lockers", "door lockers"]),
+                ("Lockers", ["lockers"]),
+                ("Shelving & Racking", ["shelving-racking"]),
+                ("Shelving", ["shelving"]),
+                ("Tables", ["tables"]),
+                ("Chairs", ["chairs"]),
+                ("Cupboards", ["cupboards"]),
+                ("Pedestals", ["pedestals"]),
+                ("Storage", ["storage"]),
+                ("Screens", ["screens"]),
+                ("Sofas", ["sofas"]),
+                ("Benches", ["benches"]),
+            ]
+
+            product_type = ""
+            for cat_name, keywords in category_patterns:
+                if any(kw in full_context for kw in keywords):
+                    product_type = cat_name
+                    break
+
+            # B. Extract Brand / Range
             brand_range = ""
+            brands = [
+                ("Probe", ["probe"]),
+                ("Rapid 1", ["rapid-1", "rapid 1"]),
+                ("Rapid 2", ["rapid-2", "rapid 2"]),
+                ("QMP", ["qmp"]),
+                ("Elite", ["elite"]),
+                ("Pure", ["pure"]),
+                ("Educate", ["educate"]),
+                ("Value Line", ["value-line", "value line"]),
+                ("Everyday", ["everyday"]),
+                ("Titan", ["titan"]),
+                ("Hille", ["hille"]),
+                ("Bisley", ["bisley"]),
+                ("Tully", ["tully"]),
+                ("Progress", ["progress"]),
+            ]
+            for b_name, b_kws in brands:
+                if any(kw in full_path_str for kw in b_kws):
+                    brand_range = b_name
+                    break
+
+            # C. Extract Material / Finish
             material_finish = ""
-            capacity = ""
-            age_group = ""
-            dimensions = ""
+            materials = [
+                ("Chipboard", ["chipboard"]),
+                ("Galvanised", ["galvanized", "galvanised"]),
+                ("Melamine", ["melamine"]),
+                ("Wire Mesh", ["wire-mesh", "wire mesh"]),
+                ("Perforated", ["perforated"]),
+                ("Vision Panel", ["vision-panel", "vision"]),
+                ("Fully Welded", ["fully-welded", "fully welded"]),
+                ("Crush Bent", ["crush-bent", "crush bent"]),
+            ]
+            for m_name, m_kws in materials:
+                if any(kw in full_path_str for kw in m_kws):
+                    material_finish = m_name
+                    break
+
+            # D. Extract Specs (Door/Tier Counts, Dimensions, Age, Capacity)
+            spec_door, spec_tier, dimensions, age_group, capacity = (
+                "",
+                "",
+                "",
+                "",
+                "",
+            )
 
             for seg in path_segments:
                 seg_lower = seg.lower()
 
+                # Door count
+                d_match = re.search(r"\b(\d+)\s*-?\s*door\b", seg_lower)
+                if d_match:
+                    spec_door = f"{d_match.group(1)} Door"
+
+                # Tier count
+                t_match = re.search(
+                    r"\b(\d+)\s*-?\s*(tier|shelves)\b", seg_lower
+                )
+                if t_match:
+                    spec_tier = f"{t_match.group(1)} Tier"
+
                 # Capacity
-                if re.search(r"\d+kg", seg_lower):
-                    cap_match = re.search(r"(\d+kg)", seg_lower)
-                    if cap_match:
-                        capacity = f"({cap_match.group(1).upper()})"
-
-                # Material
-                if "chipboard" in seg_lower:
-                    material_finish = "Chipboard"
-                elif (
-                    "galvanized" in seg_lower or "galvanised" in seg_lower
-                ):
-                    material_finish = "Galvanised"
-                elif "melamine" in seg_lower:
-                    material_finish = "Melamine"
-                elif "mesh" in seg_lower:
-                    material_finish = "Wire Mesh"
-                elif "perforated" in seg_lower:
-                    material_finish = "Perforated"
-                elif "vision" in seg_lower:
-                    material_finish = "Vision Panel"
-
-                # Brand / Range
-                if "probe" in seg_lower:
-                    brand_range = "Probe"
-                elif "rapid-1" in seg_lower:
-                    brand_range = "Rapid 1"
-                elif "rapid-2" in seg_lower:
-                    brand_range = "Rapid 2"
-                elif "qmp" in seg_lower:
-                    brand_range = "QMP"
-                elif "elite" in seg_lower:
-                    brand_range = "Elite"
-                elif "pure" in seg_lower:
-                    brand_range = "Pure"
-                elif "educate" in seg_lower:
-                    brand_range = "Educate"
-                elif "value-line" in seg_lower:
-                    brand_range = "Value Line"
-                elif "everyday" in seg_lower:
-                    brand_range = "Everyday"
+                c_match = re.search(r"\b(\d+kg)\b", seg_lower)
+                if c_match:
+                    capacity = f"({c_match.group(1).upper()})"
 
                 # Age Groups
-                if re.search(r"\d+-\d+-years", seg_lower) or re.search(
-                    r"\d+-years", seg_lower
-                ):
-                    age_match = re.search(
-                        r"(\d+[-+]*\d*)\s*years?", seg_lower.replace("-", " ")
-                    )
-                    if age_match:
-                        age_group = f"({age_match.group(1)} Years)"
+                a_match = re.search(
+                    r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", seg_lower
+                )
+                if a_match:
+                    age_group = f"({a_match.group(1)} Years)"
 
                 # Dimensions
                 if re.search(r"\d+wx\d+h", seg_lower) or re.search(
                     r"\d+wx\d+dx\d+h", seg_lower
                 ):
-                    dim_text = seg_lower.replace("cm", "").replace("mm", "")
-                    dim_text = re.sub(
-                        r"(\d+)wx(\d+)dx(\d+)h", r"\1w x \2d x \3h cm", dim_text
-                    )
-                    dim_text = re.sub(
-                        r"(\d+)wx(\d+)h", r"\1w x \2h mm", dim_text
-                    )
-                    dimensions = dim_text.upper()
+                    dim_str = seg_lower
+                    dim_str = re.sub(r"[-_]*cm$", "", dim_str)
+                    dim_str = re.sub(r"[-_]*mm$", "", dim_str)
 
-            # Base Category Name from last path segment
-            last_segment = path_segments[-1] if path_segments else ""
-            base_name = format_slug_text(last_segment)
-            base_name = re.sub(
-                r"\b\d+Wx\d+H\b", "", base_name, flags=re.IGNORECASE
+                    d3 = re.search(r"(\d+)wx(\d+)dx(\d+)h", dim_str)
+                    d2 = re.search(r"(\d+)wx(\d+)h", dim_str)
+                    if d3:
+                        dimensions = (
+                            f"{d3.group(1)}w x {d3.group(2)}d x"
+                            f" {d3.group(3)}h cm".upper()
+                        )
+                    elif d2:
+                        dimensions = f"{d2.group(1)}w x {d2.group(2)}h mm".upper()
+
+            # E. Build Title Parts
+            title_parts = []
+            if brand_range:
+                title_parts.append(brand_range)
+            if material_finish:
+                title_parts.append(material_finish)
+            if spec_door:
+                title_parts.append(spec_door)
+            if spec_tier:
+                title_parts.append(spec_tier)
+
+            current_title_str = " ".join(title_parts)
+            if product_type:
+                if product_type.lower() not in current_title_str.lower():
+                    if "door" in current_title_str.lower() and product_type.lower() in [
+                        "lockers",
+                        "door lockers",
+                    ]:
+                        title_parts.append("Lockers")
+                    else:
+                        title_parts.append(product_type)
+            elif not title_parts and path_segments:
+                title_parts.append(
+                    path_segments[-1].replace("-", " ").title()
+                )
+
+            if dimensions:
+                title_parts.append(dimensions)
+            if age_group:
+                title_parts.append(age_group)
+            if capacity:
+                title_parts.append(capacity)
+
+            raw_h1 = " ".join(title_parts)
+            raw_h1 = re.sub(
+                r"\b(\w+)\s+\1\b", r"\1", raw_h1, flags=re.IGNORECASE
             )
-            base_name = re.sub(
-                r"\b\d+Wx\d+Dx\d+H\b", "", base_name, flags=re.IGNORECASE
-            )
+            raw_h1 = re.sub(r"\s+", " ", raw_h1).strip()
 
-            # Construct Proposed H1
-            h1_components = [
-                brand_range,
-                material_finish,
-                base_name,
-                dimensions,
-                age_group,
-                capacity,
-            ]
-            proposed_h1 = " ".join([c for c in h1_components if c]).strip()
-            proposed_h1 = re.sub(r"\s+", " ", proposed_h1)
-
-            # Construct Title Tag
             brand_suffix = " | Furniture At Work"
-            full_title = f"{proposed_h1}{brand_suffix}"
+            full_title = f"{raw_h1}{brand_suffix}"
 
-            # Enforce character limit
             if len(full_title) > max_len:
                 max_body_len = max_len - len(brand_suffix)
                 if max_body_len > 10:
-                    truncated_body = proposed_h1[:max_body_len].rsplit(" ", 1)[
-                        0
-                    ]
+                    truncated_body = raw_h1[:max_body_len].rsplit(" ", 1)[0]
                     proposed_title = f"{truncated_body}{brand_suffix}"
                 else:
                     proposed_title = full_title[:max_len]
             else:
                 proposed_title = full_title
 
-            return proposed_h1, proposed_title
+            return raw_h1, proposed_title
 
         results = []
         for _, row in df.iterrows():
@@ -246,7 +326,12 @@ if uploaded_file is not None:
                 else ""
             )
 
-            new_h1, new_title = parse_url_taxonomy(url, max_len=max_title_len)
+            new_h1, new_title = parse_url_taxonomy(
+                url,
+                curr_title=current_title,
+                curr_h1=current_h1,
+                max_len=max_title_len,
+            )
 
             results.append({
                 "URL / Address": url,
