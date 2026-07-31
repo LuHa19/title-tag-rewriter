@@ -10,11 +10,12 @@ st.set_page_config(
 st.title("Luke's H1 & Title Tag Rewriter Tool ✍️")
 st.write(
     "Upload your crawl CSV to programmatically generate clean, unique H1s and"
-    " Meta Titles based on dynamic URL taxonomy and range extraction."
+    " Meta Titles based on dynamic URL taxonomy, search volumes, and keyword"
+    " weighting."
 )
 
 
-# --- 1. Cached File Loader ---
+# --- 1. Cached Data Loaders ---
 @st.cache_data(show_spinner="Loading CSV file into memory...")
 def load_csv_data(uploaded_file):
     try:
@@ -159,8 +160,31 @@ COMMON_SEO_WORDS = {
 }
 
 
-# --- Helper 4: Dynamic Taxonomy & Range Parser ---
-def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
+# --- Helper 4: Keyword Matching & Search Volume Sorting ---
+def find_matched_target_keywords(url_str, curr_title, curr_h1, keyword_data):
+    """Finds matching target keywords for the page and sorts them by Search Volume (descending)."""
+    if not keyword_data:
+        return []
+
+    context_text = f"{url_str} {curr_title} {curr_h1}".lower()
+    matched = []
+
+    for kw_item in keyword_data:
+        kw = kw_item["keyword"]
+        vol = kw_item["volume"]
+        pattern = re.compile(rf"\b{re.escape(kw.lower())}\b")
+        if pattern.search(context_text):
+            matched.append((kw, vol))
+
+    # Sort matched keywords by search volume descending
+    matched.sort(key=lambda x: x[1], reverse=True)
+    return [m[0].title() for m in matched]
+
+
+# --- Helper 5: Dynamic Taxonomy & Range Parser ---
+def parse_url_taxonomy(
+    url_str, curr_title="", curr_h1="", matched_keywords=None
+):
     if not isinstance(url_str, str):
         return ""
 
@@ -172,7 +196,6 @@ def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
     ]
 
     if parsed.path.endswith(".html"):
-        filename = parsed.path.split("/")[-1]
         all_path = parsed.path.replace(".html", "").lower()
     else:
         all_path = parsed.path.lower()
@@ -249,7 +272,6 @@ def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
 
     for token in path_tokens:
         token_str = token.strip()
-        # Keep numeric designators attached to range names (e.g. "1" in "Rapid 1")
         if (
             token_str
             and token_str not in COMMON_SEO_WORDS
@@ -261,22 +283,34 @@ def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
 
     dynamic_range = " ".join(range_tokens).strip()
 
-    # G. Assembly: Range + Colour + Duty + Spec Door + Product Type + Shelves + Dimensions
+    # G. Assembly with Keyword Volume Weighting
     parts = []
-    if dynamic_range:
+
+    # Priority 1: High-Volume Matched Target Keyword (if available)
+    if matched_keywords:
+        top_keyword = matched_keywords[0]
+        parts.append(top_keyword)
+
+    # Priority 2: Dynamic Range (if not already represented by target keyword)
+    if dynamic_range and not any(
+        dynamic_range.lower() in p.lower() for p in parts
+    ):
         parts.append(dynamic_range)
-    if colour:
+
+    if colour and not any(colour.lower() in p.lower() for p in parts):
         parts.append(colour)
-    if duty:
+    if duty and not any(duty.lower() in p.lower() for p in parts):
         parts.append(duty)
-    if spec_door:
+    if spec_door and not any(spec_door.lower() in p.lower() for p in parts):
         parts.append(spec_door)
 
     current_str = " ".join(parts).lower()
     if product_type and product_type.lower() not in current_str:
         parts.append(product_type)
 
-    if shelves_spec:
+    if shelves_spec and not any(
+        shelves_spec.lower() in p.lower() for p in parts
+    ):
         parts.append(shelves_spec)
     if dimensions:
         parts.append(dimensions)
@@ -289,7 +323,7 @@ def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
     return deduplicate_title_words(raw_h1)
 
 
-# --- Helper 5: Disambiguation Engine ---
+# --- Helper 6: Disambiguation Engine ---
 def ensure_unique_title(url_str, base_h1, brand_suffix, max_len, seen_titles):
     def build_title(h1):
         raw = f"{h1}{brand_suffix}"
@@ -352,11 +386,57 @@ def ensure_unique_title(url_str, base_h1, brand_suffix, max_len, seen_titles):
 
 
 # --- UI & Execution ---
-uploaded_file = st.file_uploader("Upload CSV File", type=["csv", "tsv", "txt"])
+st.subheader("1. Upload Crawl CSV")
+uploaded_file = st.file_uploader(
+    "Upload Crawl Data CSV", type=["csv", "tsv", "txt"], key="crawl_file"
+)
+
+st.subheader("2. Upload Keywords & Search Volumes (Optional)")
+keyword_file = st.file_uploader(
+    "Upload Target Keywords CSV (Columns: 'Keyword', 'Search Volume')",
+    type=["csv", "tsv", "txt"],
+    key="kw_file",
+)
+
+keyword_data = []
+
+if keyword_file is not None:
+    kw_df = load_csv_data(keyword_file)
+
+    kw_col = find_column(
+        kw_df, ["Keyword", "Keywords", "Search Term", "Query"]
+    )
+    vol_col = find_column(
+        kw_df, ["Search Volume", "Volume", "Vol", "Monthly Searches"]
+    )
+
+    if kw_col:
+        for _, r in kw_df.iterrows():
+            k_text = str(r[kw_col]).strip()
+            v_val = 0
+            if vol_col and pd.notnull(r[vol_col]):
+                try:
+                    v_val = int(
+                        float(str(r[vol_col]).replace(",", "").replace(" ", ""))
+                    )
+                except ValueError:
+                    v_val = 0
+            if k_text:
+                keyword_data.append({"keyword": k_text, "volume": v_val})
+
+        st.success(
+            f"Successfully loaded {len(keyword_data):,} target keywords with"
+            " search volumes!"
+        )
+    else:
+        st.warning(
+            "Could not automatically find a 'Keyword' column in the uploaded"
+            " keyword CSV."
+        )
 
 if uploaded_file is not None:
     df = load_csv_data(uploaded_file)
-    st.success(f"Successfully loaded {len(df):,} URLs!")
+    st.success(f"Successfully loaded {len(df):,} URLs from crawl data!")
 
     default_url_col = find_column(
         df, ["Address", "URL", "Url", "Page Address", "Link"]
@@ -419,7 +499,7 @@ if uploaded_file is not None:
     )
 
     if st.button("Generate Rewritten Titles & H1s"):
-        with st.spinner("Processing titles..."):
+        with st.spinner("Processing titles and weighting search volumes..."):
             results = []
             seen_recommended_titles = set()
             brand_suffix = " | Furniture At Work"
@@ -448,8 +528,16 @@ if uploaded_file is not None:
                     else ""
                 )
 
+                # Match target keywords
+                matched_kws = find_matched_target_keywords(
+                    url, current_title, current_h1, keyword_data
+                )
+
                 raw_h1 = parse_url_taxonomy(
-                    url, curr_title=current_title, curr_h1=current_h1
+                    url,
+                    curr_title=current_title,
+                    curr_h1=current_h1,
+                    matched_keywords=matched_kws,
                 )
                 final_h1, final_title = ensure_unique_title(
                     url,
@@ -465,6 +553,9 @@ if uploaded_file is not None:
                     "Recommended Title Tag": final_title,
                     "Current H1": current_h1,
                     "Recommended H1": final_h1,
+                    "Top Matched Target Keyword": (
+                        matched_kws[0] if matched_kws else "None"
+                    ),
                     "Title Tag Length": len(final_title),
                 })
 
