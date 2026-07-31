@@ -35,7 +35,7 @@ if uploaded_file is not None:
     with col1:
         url_col = st.selectbox("URL / Address Column", df.columns, index=df.columns.get_loc(default_url_col) if default_url_col in df.columns else 0)
     with col2:
-        title_col = st.selectbox("Current Title Column", df.columns, index=df.columns.get_loc(default_title_col) if default_title_col in df.columns else 0)
+        title_col = st.selectbox("Current Title Column", ["None"] + list(df.columns, index=list(df.columns.get_loc(default_title_col)+1 if default_title_col in df.columns else 0)
     with col3:
         h1_col = st.selectbox("Current H1 Column", ["None"] + list(df.columns), index=list(df.columns).index(default_h1_col)+1 if default_h1_col in df.columns else 0)
 
