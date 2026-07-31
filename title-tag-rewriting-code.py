@@ -10,7 +10,7 @@ st.set_page_config(
 st.title("Luke's H1 & Title Tag Rewriter Tool ✍️")
 st.write(
     "Upload your crawl CSV to programmatically generate clean, unique H1s and"
-    " Meta Titles based on rich URL taxonomy."
+    " Meta Titles based on dynamic URL taxonomy and range extraction."
 )
 
 
@@ -66,20 +66,28 @@ def deduplicate_title_words(title_str):
     return " ".join(clean_words)
 
 
-# --- Helper 3: Rich Taxonomy Parser ---
-BRANDS = [
-    ("Rapid 1", ["rapid-1", "rapid 1"]),
-    ("Rapid 2", ["rapid-2", "rapid 2"]),
-    ("Probe", ["probe"]),
-    ("QMP", ["qmp"]),
-    ("Elite", ["elite"]),
-    ("Pure", ["pure"]),
-    ("Educate", ["educate"]),
-    ("Value Line", ["value-line", "value line"]),
-    ("Everyday", ["everyday"]),
-    ("Titan", ["titan"]),
-    ("Hille", ["hille"]),
-    ("Bisley", ["bisley"]),
+# --- Helper 3: Structural SEO Taxonomies ---
+CATEGORY_PATTERNS = [
+    ("Classroom Tables", ["classroom-tables", "classroom tables"]),
+    ("Classroom Chairs", ["classroom-chairs", "classroom chairs"]),
+    ("Executive Desks", ["executive-desks", "executive desks"]),
+    ("Height Adjustable Desks", ["height-adjustable-desks"]),
+    ("Reception Desks", ["reception-desks", "reception desks"]),
+    ("Soft Seating", ["soft-seating", "soft seating"]),
+    ("Reception Furniture", ["reception-furniture", "reception furniture"]),
+    ("Office Desks", ["office-desks", "office desks", "desks-by-size"]),
+    ("Executive Chairs", ["executive-chairs"]),
+    ("Office Chairs", ["office-chairs", "office chairs"]),
+    ("Door Lockers", ["door-lockers", "door lockers"]),
+    ("Lockers", ["lockers"]),
+    ("Shelving & Racking", ["shelving-racking"]),
+    ("Shelving", ["shelving"]),
+    ("Desks", ["desks"]),
+    ("Tables", ["tables"]),
+    ("Chairs", ["chairs"]),
+    ("Cupboards", ["cupboards"]),
+    ("Pedestals", ["pedestals"]),
+    ("Storage", ["storage"]),
 ]
 
 COLORS_MAP = [
@@ -99,122 +107,173 @@ COLORS_MAP = [
     ("Maple", ["maple"]),
 ]
 
-CATEGORY_PATTERNS = [
-    ("Classroom Tables", ["classroom-tables", "classroom tables"]),
-    ("Classroom Chairs", ["classroom-chairs", "classroom chairs"]),
-    ("Office Desks", ["office-desks", "office desks", "desks-by-size", "desks"]),
-    ("Executive Desks", ["executive-desks"]),
-    ("Height Adjustable Desks", ["height-adjustable-desks"]),
-    ("Office Chairs", ["office-chairs", "office chairs"]),
-    ("Executive Chairs", ["executive-chairs"]),
-    ("Door Lockers", ["door-lockers", "door lockers"]),
-    ("Lockers", ["lockers"]),
-    ("Shelving & Racking", ["shelving-racking"]),
-    ("Shelving", ["shelving"]),
-    ("Tables", ["tables"]),
-    ("Chairs", ["chairs"]),
-    ("Cupboards", ["cupboards"]),
-    ("Pedestals", ["pedestals"]),
-    ("Storage", ["storage"]),
+MATERIALS = [
+    "chipboard",
+    "melamine",
+    "wire-mesh",
+    "mesh",
+    "steel",
+    "wood",
+    "perforated",
+    "fully-welded",
+    "crush-bent",
 ]
 
+COMMON_SEO_WORDS = {
+    "furniture",
+    "seating",
+    "reception",
+    "office",
+    "desks",
+    "tables",
+    "chairs",
+    "lockers",
+    "shelving",
+    "racking",
+    "soft",
+    "executive",
+    "height",
+    "adjustable",
+    "door",
+    "standard",
+    "heavy",
+    "duty",
+    "with",
+    "shelves",
+    "cm",
+    "mm",
+    "kg",
+    "by",
+    "size",
+    "metric",
+    "school",
+    "classroom",
+    "old",
+    "years",
+    "year",
+    "fully",
+    "welded",
+    "crush",
+    "bent",
+    "html",
+}
 
-def parse_url_taxonomy(url_str, curr_title="", curr_h1="", include_range=True):
+
+# --- Helper 4: Dynamic Taxonomy & Range Parser ---
+def parse_url_taxonomy(url_str, curr_title="", curr_h1=""):
     if not isinstance(url_str, str):
         return ""
 
     parsed = urlparse(url_str)
-    filename = parsed.path.split("/")[-1]
-    slug = re.sub(r"\.html$", "", filename).lower()
-    full_path_str = parsed.path.lower()
+    path_segments = [
+        seg
+        for seg in parsed.path.split("/")
+        if seg and not seg.endswith(".html")
+    ]
 
-    # A. Brand / Range
-    brand_range = ""
-    for b_name, b_kws in BRANDS:
-        if any(kw in full_path_str for kw in b_kws):
-            brand_range = b_name
+    if parsed.path.endswith(".html"):
+        filename = parsed.path.split("/")[-1]
+        all_path = parsed.path.replace(".html", "").lower()
+    else:
+        all_path = parsed.path.lower()
+
+    # A. Product Category Detection
+    product_type = ""
+    for cat_name, keywords in CATEGORY_PATTERNS:
+        if any(kw in all_path for kw in keywords):
+            product_type = cat_name
             break
 
-    # B. Duty / Grade Rating
+    # B. Duty Grade
     duty = ""
-    if "heavy-duty" in slug or "heavy duty" in slug:
+    if "heavy-duty" in all_path or "heavy duty" in all_path:
         duty = "Heavy Duty"
-    elif "standard-shelving" in slug or "standard" in slug:
+    elif "standard-shelving" in all_path or "standard" in all_path:
         duty = "Standard Duty"
 
     # C. Colour Detection
     colour = ""
     for c_name, c_kws in COLORS_MAP:
-        if any(kw in slug for kw in c_kws):
+        if any(kw in all_path for kw in c_kws):
             colour = c_name
             break
 
-    # D. Shelves & Material Spec
+    # D. Shelves / Door Specs
     shelves_spec = ""
     shelves_match = re.search(
-        r"with-(\d+)-(chipboard|melamine|wire-mesh|mesh|steel|wood)-shelves", slug
+        r"with-(\d+)-(chipboard|melamine|wire-mesh|mesh|steel|wood)-shelves",
+        all_path,
     )
     if shelves_match:
         count = shelves_match.group(1)
         mat = shelves_match.group(2).title().replace("-", " ")
         shelves_spec = f"With {count} {mat} Shelves"
-    else:
-        shelves_gen = re.search(
-            r"(\d+)-(chipboard|melamine|mesh|steel)-shelves", slug
-        )
-        if shelves_gen:
-            count = shelves_gen.group(1)
-            mat = shelves_gen.group(2).title()
-            shelves_spec = f"With {count} {mat} Shelves"
 
-    # E. Door / Tier Spec
     spec_door, spec_tier = "", ""
-    d_match = re.search(r"\b(\d+)\s*-?\s*door\b", slug)
+    d_match = re.search(r"\b(\d+)\s*-?\s*door\b", all_path)
     if d_match:
         spec_door = f"{d_match.group(1)} Door"
 
-    t_match = re.search(r"\b(\d+)\s*-?\s*(tier|shelves)\b", slug)
-    if t_match and not shelves_spec:
-        spec_tier = f"{t_match.group(1)} Tier"
-
-    # F. Dimensions & Capacity
+    # E. Dimensions & Specs
     dimensions, capacity, age_group = "", "", ""
-    dim_match = re.search(r"(\d+wx\d+h|\d+wx\d+dx\d+h)", slug)
+    dim_match = re.search(r"(\d+wx\d+h|\d+wx\d+dx\d+h)", all_path)
     if dim_match:
         dimensions = dim_match.group(1)
 
-    c_match = re.search(r"\b(\d+kg)\b", slug)
+    c_match = re.search(r"\b(\d+kg)\b", all_path)
     if c_match:
         capacity = f"({c_match.group(1).upper()})"
 
-    a_match = re.search(r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", slug)
+    a_match = re.search(r"(\d+(?:-\d+)?(?:\+)?)-years?(?:-old)?", all_path)
     if a_match:
         age_group = f"({a_match.group(1)} Years)"
 
-    # G. Product Type Category
-    product_type = ""
-    for cat_name, keywords in CATEGORY_PATTERNS:
-        if any(kw in full_path_str for kw in keywords):
-            product_type = cat_name
-            break
+    # F. DYNAMIC RANGE EXTRACTION
+    clean_path = all_path
+    for mat in MATERIALS:
+        clean_path = clean_path.replace(mat, "")
+    for _, c_kws in COLORS_MAP:
+        for kw in c_kws:
+            clean_path = clean_path.replace(kw, "")
 
-    # Construct in user's preferred order:
-    # Range + Colour + Duty + Product Type + Shelves/Specs + Dimensions
+    clean_path = re.sub(r"with-\d+-[a-z]+-shelves", "", clean_path)
+    clean_path = re.sub(r"\b\d+wx\d+h?\b", "", clean_path)
+    clean_path = re.sub(r"\b\d+wx\d+dx\d+h?\b", "", clean_path)
+    clean_path = re.sub(r"\b\d+-door\b", "", clean_path)
+    clean_path = re.sub(r"\b\d+kg\b", "", clean_path)
+    clean_path = re.sub(r"\b\d+-\d+-years?-old\b", "", clean_path)
+    clean_path = re.sub(r"\b\d+-years?-old\b", "", clean_path)
+
+    path_tokens = re.split(r"[/_-]", clean_path)
+    range_tokens = []
+
+    for token in path_tokens:
+        token_str = token.strip()
+        # Keep numeric designators attached to range names (e.g. "1" in "Rapid 1")
+        if (
+            token_str
+            and token_str not in COMMON_SEO_WORDS
+            and (not token_str.isdigit() or len(range_tokens) > 0)
+        ):
+            formatted = token_str.title()
+            if formatted not in range_tokens:
+                range_tokens.append(formatted)
+
+    dynamic_range = " ".join(range_tokens).strip()
+
+    # G. Assembly: Range + Colour + Duty + Spec Door + Product Type + Shelves + Dimensions
     parts = []
-    if include_range and brand_range:
-        parts.append(brand_range)
+    if dynamic_range:
+        parts.append(dynamic_range)
     if colour:
         parts.append(colour)
     if duty:
         parts.append(duty)
     if spec_door:
         parts.append(spec_door)
-    if spec_tier:
-        parts.append(spec_tier)
 
-    # Ensure product_type is present
-    current_str = " ".join(parts)
-    if product_type and product_type.lower() not in current_str.lower():
+    current_str = " ".join(parts).lower()
+    if product_type and product_type.lower() not in current_str:
         parts.append(product_type)
 
     if shelves_spec:
@@ -230,7 +289,7 @@ def parse_url_taxonomy(url_str, curr_title="", curr_h1="", include_range=True):
     return deduplicate_title_words(raw_h1)
 
 
-# --- Helper 4: Safe Disambiguation Engine ---
+# --- Helper 5: Disambiguation Engine ---
 def ensure_unique_title(url_str, base_h1, brand_suffix, max_len, seen_titles):
     def build_title(h1):
         raw = f"{h1}{brand_suffix}"
@@ -352,7 +411,6 @@ if uploaded_file is not None:
             "Current H1 Column", column_options, index=h1_index
         )
 
-    # Increased default character limit to 90 so descriptive titles fit cleanly
     max_title_len = st.number_input(
         "Max Title Tag Length (Characters)",
         min_value=30,
@@ -391,10 +449,7 @@ if uploaded_file is not None:
                 )
 
                 raw_h1 = parse_url_taxonomy(
-                    url,
-                    curr_title=current_title,
-                    curr_h1=current_h1,
-                    include_range=False,
+                    url, curr_title=current_title, curr_h1=current_h1
                 )
                 final_h1, final_title = ensure_unique_title(
                     url,
