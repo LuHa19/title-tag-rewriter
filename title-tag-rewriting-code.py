@@ -501,11 +501,10 @@ if uploaded_file is not None:
 
     with set_col2:
         brand_name_input = st.text_input(
-            "Brand Name Suffix",
+            "Add Brand Name To Title 😎",
             value="Furniture At Work",
             help=(
-                "Brand name appended at the end of each title tag. E.g."
-                " 'Furniture At Work' becomes ' | Furniture At Work'."
+                "Brand name appendeds the end of each title tag. Include a pipe or a hyphen"
             ),
         )
 
