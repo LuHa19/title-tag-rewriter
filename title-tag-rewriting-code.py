@@ -162,7 +162,7 @@ COMMON_SEO_WORDS = {
 
 # --- Helper 4: Keyword Matching & Search Volume Sorting ---
 def find_matched_target_keywords(url_str, curr_title, curr_h1, keyword_data):
-    """Finds matching target keywords for the page and sorts them by Search Volume (descending)."""
+
     if not keyword_data:
         return []
 
@@ -176,7 +176,6 @@ def find_matched_target_keywords(url_str, curr_title, curr_h1, keyword_data):
         if pattern.search(context_text):
             matched.append((kw, vol))
 
-    # Sort matched keywords by search volume descending
     matched.sort(key=lambda x: x[1], reverse=True)
     return [m[0].title() for m in matched]
 
@@ -286,12 +285,10 @@ def parse_url_taxonomy(
     # G. Assembly with Keyword Volume Weighting
     parts = []
 
-    # Priority 1: High-Volume Matched Target Keyword (if available)
     if matched_keywords:
         top_keyword = matched_keywords[0]
         parts.append(top_keyword)
 
-    # Priority 2: Dynamic Range (if not already represented by target keyword)
     if dynamic_range and not any(
         dynamic_range.lower() in p.lower() for p in parts
     ):
@@ -491,18 +488,41 @@ if uploaded_file is not None:
             "Current H1 Column", column_options, index=h1_index
         )
 
-    max_title_len = st.number_input(
-        "Max Title Tag Length (Characters)",
-        min_value=30,
-        max_value=120,
-        value=90,
-    )
+    st.subheader("⚙️ Title Tag Output Settings")
+    set_col1, set_col2 = st.columns(2)
+
+    with set_col1:
+        max_title_len = st.number_input(
+            "Max Title Tag Length (Characters)",
+            min_value=30,
+            max_value=120,
+            value=90,
+        )
+
+    with set_col2:
+        brand_name_input = st.text_input(
+            "Brand Name Suffix",
+            value="Furniture At Work",
+            help=(
+                "Brand name appended at the end of each title tag. E.g."
+                " 'Furniture At Work' becomes ' | Furniture At Work'."
+            ),
+        )
+
+    # Format user brand suffix safely
+    raw_brand = brand_name_input.strip()
+    if raw_brand:
+        if raw_brand.startswith("|") or raw_brand.startswith("-"):
+            brand_suffix = f" {raw_brand}"
+        else:
+            brand_suffix = f" | {raw_brand}"
+    else:
+        brand_suffix = ""
 
     if st.button("Generate Rewritten Titles & H1s"):
         with st.spinner("Processing titles and weighting search volumes..."):
             results = []
             seen_recommended_titles = set()
-            brand_suffix = " | Furniture At Work"
             total_rows = len(df)
 
             progress_bar = st.progress(0.0)
@@ -528,7 +548,6 @@ if uploaded_file is not None:
                     else ""
                 )
 
-                # Match target keywords
                 matched_kws = find_matched_target_keywords(
                     url, current_title, current_h1, keyword_data
                 )
