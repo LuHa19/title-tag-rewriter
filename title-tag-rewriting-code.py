@@ -11,6 +11,7 @@ st.title("Luke's H1 & Title Tag Rewriter Tool ✍️")
 st.write(
     "Upload your crawl CSV to programmatically generate clean, unique H1s and"
     " Meta Titles based on URL taxonomy."
+    "Add search volume and keywords for a closer match!"
 )
 
 
@@ -415,12 +416,12 @@ if uploaded_file is not None:
             progress_bar.empty()
 
         output_df = pd.DataFrame(results)
-        st.subheader("🎉 Generated Optimization Table")
+        st.subheader("🎉 Generated Optimised Titles and/or H1s. Always check them over before sending to a client.")
         st.dataframe(output_df)
 
         csv_data = output_df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Download Rewritten Titles & H1s CSV",
+            label="📥 Download CSV",
             data=csv_data,
             file_name="rewritten_titles_and_h1s.csv",
             mime="text/csv",
